@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Web Crawl Agent</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0b1523;
+        color: #f3f4f6;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+      }
+      main {
+        width: min(900px, 100%);
+        background: #111a2b;
+        border: 1px solid #1f2d3d;
+        border-radius: 18px;
+        padding: 2rem;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      }
+      h1 {
+        margin-top: 0;
+      }
+      form {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+      }
+      input[type="url"] {
+        flex: 1;
+        padding: 0.9rem 1rem;
+        border-radius: 999px;
+        border: 1px solid #1f2d3d;
+        background: #0d1522;
+        color: inherit;
+      }
+      button {
+        padding: 0.9rem 1.8rem;
+        border-radius: 999px;
+        border: none;
+        background: #2563eb;
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #conversation {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        max-height: 320px;
+        overflow-y: auto;
+        margin-bottom: 1.5rem;
+      }
+      .bubble {
+        padding: 0.9rem 1rem;
+        border-radius: 14px;
+        width: fit-content;
+        max-width: 80%;
+        line-height: 1.4;
+      }
+      .user {
+        align-self: flex-end;
+        background: #2563eb;
+      }
+      .agent {
+        background: #1d2435;
+      }
+      #summary-card {
+        background: #0d1522;
+        border: 1px solid #1f2d3d;
+        border-radius: 16px;
+        padding: 1.5rem;
+      }
+      .summary-section + .summary-section {
+        margin-top: 1rem;
+      }
+      ul {
+        margin: 0.4rem 0 0 1rem;
+      }
+      a.download {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        margin-top: 1rem;
+        text-decoration: none;
+        color: #38bdf8;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Web Crawl Agent</h1>
+      <form id="crawl-form">
+        <input type="url" id="url-input" placeholder="https://example.com" required />
+        <button type="submit">Analyze</button>
+      </form>
+      <section id="conversation"></section>
+      <section id="summary-card" hidden>
+        <div class="summary-section">
+          <h2>Overview</h2>
+          <p id="overview"></p>
+        </div>
+        <div class="summary-section">
+          <h3>Key Sections</h3>
+          <ul id="sections"></ul>
+        </div>
+        <div class="summary-section">
+          <h3>Highlights</h3>
+          <ul id="highlights"></ul>
+        </div>
+        <div class="summary-section">
+          <h3>Recommendations</h3>
+          <ul id="recommendations"></ul>
+        </div>
+        <div class="summary-section">
+          <h3>Metrics</h3>
+          <ul id="metrics"></ul>
+        </div>
+        <a id="download-link" class="download" href="#" target="_blank">⬇ Download PDF</a>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById('crawl-form');
+      const urlInput = document.getElementById('url-input');
+      const convo = document.getElementById('conversation');
+      const summaryCard = document.getElementById('summary-card');
+      const overviewEl = document.getElementById('overview');
+      const sectionsEl = document.getElementById('sections');
+      const highlightsEl = document.getElementById('highlights');
+      const recommendationsEl = document.getElementById('recommendations');
+      const metricsEl = document.getElementById('metrics');
+      const downloadLink = document.getElementById('download-link');
+
+      let source;
+
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const url = urlInput.value.trim();
+        if (!url) return;
+        addBubble('You', url, 'user');
+        startStream(url);
+      });
+
+      function startStream(url) {
+        summaryCard.hidden = true;
+        metricsEl.innerHTML = '';
+        sectionsEl.innerHTML = '';
+        highlightsEl.innerHTML = '';
+        recommendationsEl.innerHTML = '';
+        overviewEl.textContent = '';
+        if (source) {
+          source.close();
+        }
+        addBubble('Agent', 'Starting crawl...', 'agent');
+        source = new EventSource(`/api/stream?url=${encodeURIComponent(url)}`);
+        source.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          if (data.type === 'status') {
+            addBubble('Agent', data.message, 'agent');
+          } else if (data.type === 'summary') {
+            renderSummary(data);
+            addBubble('Agent', 'Summary complete ✅', 'agent');
+            source.close();
+          } else if (data.type === 'error') {
+            addBubble('Agent', `Error: ${data.message}`, 'agent');
+            source.close();
+          }
+        };
+        source.onerror = () => {
+          addBubble('Agent', 'Connection lost. Please retry.', 'agent');
+          source.close();
+        };
+      }
+
+      function addBubble(author, message, cls) {
+        const bubble = document.createElement('div');
+        bubble.className = `bubble ${cls}`;
+        bubble.innerHTML = `<strong>${author}:</strong> ${message}`;
+        convo.appendChild(bubble);
+        convo.scrollTop = convo.scrollHeight;
+      }
+
+      function renderSummary(data) {
+        const { summary, metrics, pdf_path } = data;
+        overviewEl.textContent = summary.overview;
+        populateList(sectionsEl, summary.sections);
+        populateList(highlightsEl, summary.highlights);
+        populateList(recommendationsEl, summary.recommendations);
+        populateList(metricsEl, [
+          `Pages crawled: ${metrics.total_pages}`,
+          `Internal links: ${metrics.internal_links}`,
+          `External links: ${metrics.external_links}`,
+          `Top headings: ${metrics.top_headings.join(', ')}`,
+          `Keywords: ${metrics.keywords.join(', ')}`,
+        ]);
+        downloadLink.href = pdf_path;
+        summaryCard.hidden = false;
+      }
+
+      function populateList(node, items) {
+        node.innerHTML = '';
+        items.forEach((item) => {
+          const li = document.createElement('li');
+          li.textContent = item;
+          node.appendChild(li);
+        });
+      }
+    </script>
+  </body>
+</html>
